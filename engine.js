@@ -25,12 +25,13 @@
     newGame(company, founder) {
       this.s = {
         company: company || 'Garage Soft', founder: founder || 'You',
-        week: 0, money: 12000, fans: 0, rep: 0, hype: 0,
+        week: 0, money: 15000, fans: 0, rep: 0, hype: 0,
         stage: 'garage', employees: [], products: [], project: null, offers: [], log: [],
         skills: { tech: 8, design: 8 }, platformsOwned: [], eventsFired: {}, mods: [],
         contractMult: null, salaryMult: 1, trend: null, trendUntil: 0,
         postCooldown: 0, totalRevenue: 0, contractsDone: 0, over: false, candidates: [],
         bestProduct: null, nextOffer: 10, seq: 1,
+        rp: 0, researched: [], research: null, warnedDebt: false,
       };
       this.pending = null;
       this.fireEvents();
@@ -40,6 +41,52 @@
       return this.s;
     }
 
+    migrate() { const s = this.s; if (!s) return; s.rp = s.rp || 0; s.researched = s.researched || []; s.research = s.research || null; }
+
+    // ---- research
+    has(id) { return this.s.researched.includes(id); }
+    rpScale(y) { return Math.pow(1.06, y - D.START_YEAR); }
+    researchables() {
+      const s = this.s, yr = this.year, list = [];
+      for (const t of D.types) {
+        if (!t.research || this.has(t.id) || t.unlock > yr) continue;
+        list.push({ kind: 'type', id: t.id, name: t.name, desc: t.desc, rp: Math.round(25 * this.rpScale(t.unlock)), cost: Math.round(1200 * this.infl), weeks: 4, hot: s.trend === t.id });
+      }
+      for (const r of D.research) {
+        if (this.has(r.id) || r.from > yr) continue;
+        list.push({ kind: 'boost', id: r.id, name: r.name, desc: r.desc, rp: r.rp, cost: Math.round(r.cost * this.infl), weeks: r.weeks });
+      }
+      return list;
+    }
+    upcoming(n = 4) {
+      const yr = this.year, list = [];
+      for (const t of D.types) if (t.research && !this.has(t.id) && t.unlock > yr) list.push({ kind: 'type', id: t.id, name: t.name, year: t.unlock });
+      for (const r of D.research) if (!this.has(r.id) && r.from > yr) list.push({ kind: 'boost', id: r.id, name: r.name, year: r.from });
+      return list.sort((a, b) => a.year - b.year).slice(0, n);
+    }
+    startResearch(id) {
+      const s = this.s; if (s.research) return 'Already researching something.';
+      const item = this.researchables().find(x => x.id === id); if (!item) return 'Not available.';
+      if (s.rp < item.rp) return `Need ${item.rp} research points (have ${Math.floor(s.rp)}).`;
+      if (s.money < item.cost) return `Need ${fmtMoney(item.cost)}.`;
+      s.rp -= item.rp; s.money -= item.cost;
+      s.research = { id, kind: item.kind, name: item.name, week: 0, weeks: item.weeks };
+      this.log(`Research started: ${item.name} (${item.weeks} weeks).`);
+      return null;
+    }
+    progressResearch() {
+      const s = this.s, r = s.research; if (!r) return;
+      r.week++;
+      if (r.week >= r.weeks) {
+        s.researched.push(r.id); s.research = null;
+        this.log(r.kind === 'type' ? `Research complete: you can now build ${r.name}!` : `Research complete: ${r.name}. ${D.research.find(x => x.id === r.id).desc}`, 'good');
+        this.emit('research', r);
+      }
+    }
+    outputMult() { return 1 + (this.has('srcctl') ? 0.08 : 0) + (this.has('ide') ? 0.08 : 0) + (this.has('agile') ? 0.10 : 0) + (this.has('remote') ? 0.06 : 0); }
+    bugMult() { return (this.has('unittest') ? 0.7 : 1) * (this.has('ci') ? 0.7 : 1); }
+    addRP(points) { this.s.rp += points * 0.12; }
+
     // ---- time helpers
     get date() { const d = new Date(D.START_YEAR, 0, 1); d.setDate(d.getDate() + this.s.week * 7); return d; }
     get year() { return this.date.getFullYear(); }
@@ -47,7 +94,7 @@
     get infl() { return Math.pow(1.035, this.yearF - D.START_YEAR); }
     dateStr() { return this.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
     marketSize(y = this.yearF) { return Math.pow(1.075, y - D.START_YEAR); }
-    expectedPPW(y = this.yearF) { return 9 * Math.pow(1.06, y - D.START_YEAR); } // expected points per week
+    expectedPPW(y = this.yearF) { return 9.5 * Math.pow(1.06, y - D.START_YEAR); } // expected points per week
     eraIndex() { let i = 0; D.computers.forEach((c, k) => { if (this.year >= c.from) i = k; }); return i; }
     network() { let n = D.networks[0]; for (const x of D.networks) if (this.year >= x.from) n = x; return n; }
     reviewers() { let r = D.reviewers[1984]; for (const k of Object.keys(D.reviewers)) if (this.year >= +k) r = D.reviewers[k]; return r; }
@@ -58,7 +105,8 @@
     type(id) { return D.types.find(t => t.id === id); }
     platform(id) { return D.platforms.find(p => p.id === id); }
     stage() { return D.stages[this.s.stage]; }
-    unlockedTypes() { return D.types.filter(t => t.unlock <= this.year); }
+    unlockedTypes() { return D.types.filter(t => t.unlock <= this.year && (!t.research || this.has(t.id))); }
+    yearTypes() { return D.types.filter(t => t.unlock <= this.year); }
     activePlatforms() { return D.platforms.filter(p => p.from <= this.year && p.to >= this.year); }
     platformShare(p, y = this.yearF) {
       if (y < p.from || y > p.to + 1) return 0;
@@ -87,7 +135,8 @@
       s.money -= cost;
 
       // project progress
-      if (s.project) this.progressProject();
+      if (s.project) this.progressProject(); else s.rp += 1.5 * this.rpScale(this.yearF);
+      this.progressResearch();
 
       // sales
       for (const p of s.products) if (p.active) this.sellWeek(p);
@@ -118,7 +167,9 @@
       }
 
       // endings
-      if (s.money < -15000 * infl) {
+      if (s.money < 0 && !s.warnedDebt) { s.warnedDebt = true; this.log('You are in the red. The bank gets nervous below ' + fmtMoney(-25000 * infl) + '. Take a contract or ship something!', 'bad'); }
+      if (s.money >= 0) s.warnedDebt = false;
+      if (s.money < -25000 * infl) {
         s.over = true; s.endReason = 'bankrupt';
         this.pending = { type: 'gameover', reason: 'bankrupt' };
         this.emit('pending', this.pending);
@@ -165,7 +216,7 @@
     }
     rollTrend() {
       const s = this.s;
-      const list = this.unlockedTypes();
+      const list = this.yearTypes();
       s.trend = pick(list).id;
       s.trendUntil = s.week + Math.round(rnd(20, 40));
       if (s.week > 0) this.log(`Trend alert: ${this.type(s.trend).name} is hot right now.`, 'trend');
@@ -215,7 +266,7 @@
     }
     staffPoints(w) {
       const s = this.s;
-      const mult = s.stage === 'indie' ? 1.35 : 1;
+      const mult = (s.stage === 'indie' ? 1.35 : 1) * this.outputMult();
       let pts = (s.skills.tech * w.tech + s.skills.design * w.design) * mult;
       for (const e of s.employees) pts += e.tech * w.tech + e.design * w.design;
       return pts * rnd(0.8, 1.2);
@@ -235,8 +286,8 @@
         const w = this.phaseWeights(phase, p.sliders[phase]);
         const pts = this.staffPoints(w);
         const t = pts * w.tech, d = pts * w.design;
-        p.points += pts; p.tech += t; p.design += d;
-        let newBugs = pts * rnd(0.05, 0.12);
+        p.points += pts; p.tech += t; p.design += d; this.addRP(pts);
+        let newBugs = pts * rnd(0.05, 0.12) * this.bugMult();
         if (phase === 1) { const rel = w.fr[2]; newBugs *= (1 - rel * 0.8); p.bugs -= pts * rel * 0.6; }
         p.bugs = Math.max(0, p.bugs + newBugs);
         p.week++;
@@ -244,7 +295,7 @@
         if (p.week >= p.weeks) { this.pending = { type: 'devdone', project: p }; this.emit('pending', this.pending); }
       } else if (p.kind === 'contract') {
         const pts = this.staffPoints({ tech: 0.6, design: 0.4 });
-        p.points += pts; p.week++;
+        p.points += pts; p.week++; this.addRP(pts);
         this.emit('points', { tech: Math.round(pts * 0.6), design: Math.round(pts * 0.4) });
         if (p.week >= p.weeks) this.finishContract();
       }
@@ -311,12 +362,13 @@
       const hypeF = 1 + (prod.age <= 6 ? s.hype / 150 : s.hype / 400);
       const fanF = 1 + Math.min(2.0, s.fans / (3000 * this.marketSize()));
       const trend = s.trend === type.id ? 1.3 : 1;
-      let units = 80 * this.marketSize() * share * type.mult * size.salesMult * sf * hypeF * fanF * trend * this.salesMod(type) * curve * rnd(0.75, 1.25);
+      const boost = (this.has('cloud') && plat.cat !== 'desktop' ? 1.15 : 1) * (this.has('analytics') ? 1.1 : 1);
+      let units = 80 * boost * this.marketSize() * share * type.mult * size.salesMult * sf * hypeF * fanF * trend * this.salesMod(type) * curve * rnd(0.75, 1.25);
       if (type.volatile) units *= rnd(0.3, 2.2);
       units = Math.round(units);
       const rev = units * type.price * Math.pow(1.02, this.yearF - D.START_YEAR);
       prod.units += units; prod.revenue += rev; prod.lastWeek = rev; s.money += rev; s.totalRevenue += rev;
-      s.fans += Math.round(units * 0.05 * (prod.score / 10) * (type.curve === 'ramp' ? 0.4 : 1) / (1 + s.fans / (6000 * this.marketSize())));
+      s.fans += Math.round(units * 0.05 * (this.has('opensource') ? 1.3 : 1) * (prod.score / 10) * (type.curve === 'ramp' ? 0.4 : 1) / (1 + s.fans / (6000 * this.marketSize())));
       if (a >= W) { prod.active = false; this.log(`${prod.name} is off the market. Total: ${fmtNum(prod.units)} ${type.unit}, ${fmtMoney(prod.revenue)}.`); }
     }
 
@@ -355,7 +407,7 @@
     post(kind) {
       const s = this.s; if (s.postCooldown > 0) return 'Too soon. Wait a bit.';
       const net = this.network();
-      const indie = s.stage === 'indie' ? 1.5 : 1;
+      const indie = (s.stage === 'indie' ? 1.5 : 1) * (this.has('growth') ? 1.4 : 1);
       s.postCooldown = 3;
       if (kind === 'pump') {
         if (Math.random() < 0.12) { s.fans = Math.round(s.fans * 0.94); this.log(`Your ${net.noun} on ${net.name} got ratioed. Fans -6%.`, 'bad'); return null; }
@@ -365,7 +417,7 @@
         const n = Math.random() < 0.5 ? 2 : 3; for (let i = 0; i < n; i++) this.genOffer();
         this.log(`You asked ${net.name} for work. New contract offers arrived.`, 'good');
       } else if (kind === 'journey') {
-        const gain = Math.round((40 * this.marketSize() + Math.min(s.fans * 0.01, 2000 * this.marketSize())) * net.fans * indie);
+        const gain = Math.round((40 * this.marketSize() + Math.min(s.fans * 0.01, 2000 * this.marketSize())) * net.fans * indie * (this.has('opensource') ? 1.3 : 1));
         s.fans += gain; this.log(`You shared your founder journey on ${net.name}. +${fmtNum(gain)} fans.`, 'good');
       }
       return null;

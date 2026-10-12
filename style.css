@@ -20,6 +20,10 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .stat { display: flex; align-items: center; gap: 6px; font-size: 20px; }
 .stat .ico { font-size: 16px; }
 .speed button { padding: 4px 10px; font-size: 14px; }
+#btn-help { padding: 2px 10px; font-size: 16px; color: var(--accent); }
+.tip { border-color: var(--accent); background: #2f2d22; }
+.tip .title { color: var(--accent); }
+.guide ol { padding-left: 22px; margin: 6px 0; } .guide li { margin: 6px 0; } .guide kbd { background: #161826; border: 1px solid var(--line); padding: 0 6px; border-radius: 3px; }
 .speed button.on { background: var(--accent); color: #222; border-color: var(--accent); }
 
 main { display: grid; grid-template-columns: minmax(0, 640px) minmax(320px, 1fr); gap: 14px; padding: 14px 16px; flex: 1; }

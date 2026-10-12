@@ -20,12 +20,14 @@ Opening `index.html` directly also works (fonts load from Google Fonts; everythi
 - **Develop**: name your software, pick a type (unlocks by year), platform and project size,
   then allocate effort across three phases of three sliders each. Each type has a hidden ideal
   mix. Reviews tell you how well you fit it.
+- **Research**: research points (🔬) come from developing. Spend them to unlock new software
+  categories (34 in total) and team upgrades like Source Control, Unit Testing, Agile and Cloud.
 - **Contracts**: paid gigs that block development while you work them.
 - **Post**: the BBS → Usenet → your Blog → Chirper. Pump sales (hype), ask for work (contract
   offers) or share your journey (fans).
 - **Team / Company**: at ~$25k you choose a path: Indie Hacker (solo, output bonus), Solopreneur
   (2 contractors) or Startup Office (5 employees, large projects), later Corporate HQ (12).
-- Space bar pauses. Progress autosaves to localStorage.
+- Press **?** in the top bar for the in-game guide. Space bar pauses. Progress autosaves to localStorage.
 
 ## Files
 

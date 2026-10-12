@@ -6,7 +6,7 @@
 
   const g = new Game();
   const scene = new Scene($('#scene'), g);
-  let speed = 1, timer = null, tab = 'dev', lastTabRender = 0;
+  let speed = 1, timer = null, tab = 'dev', lastDevYear = 0;
   const devForm = { name: '', typeId: null, platformId: null, sizeId: 'small' };
 
   // ---------- loop
@@ -20,7 +20,10 @@
     if (!g.s || g.pending || g.s.over) return;
     g.tick();
     refreshStats(); refreshStatus(); save();
-    if (tab !== 'dev' || !g.s.project) renderTab(); else if (g.s.week % 2 === 0) renderTab();
+    const focused = $('#tab-body').contains(document.activeElement) && document.activeElement !== $('#tab-body');
+    if (focused) return;
+    if (tab === 'dev') { if (g.s.project ? g.s.week % 2 === 0 : g.year !== lastDevYear) renderTab(); }
+    else if (g.s.week % 2 === 0) renderTab();
   }
   let last = performance.now();
   function frame(now) { const dt = Math.min(50, now - last); last = now; scene.render(dt); requestAnimationFrame(frame); }
@@ -37,6 +40,7 @@
       else { if (payload.tech) scene.addFloater('+' + payload.tech + ' ⚙', '#5aa9ff'); if (payload.design) setTimeout(() => scene.addFloater('+' + payload.design + ' ✎', '#ffcc33'), 200); }
     }
     else if (type === 'stage') refreshAll();
+    else if (type === 'research') { scene.showToast('🔬 ' + (payload.kind === 'type' ? 'New category unlocked: ' : 'Research complete: ') + payload.name); refreshAll(); }
   });
 
   // ---------- persistence
@@ -72,23 +76,28 @@
     $('#st-fans').textContent = fmtNum(s.fans);
     $('#st-hype').textContent = Math.round(s.hype);
     $('#st-rep').textContent = Math.round(s.rep);
+    $('#st-rp').textContent = Math.floor(s.rp);
+  }
+  function researchLine() {
+    const r = g.s.research; if (!r) return '';
+    return `<div class="muted">🔬 Researching ${esc(r.name)} · week ${r.week}/${r.weeks}</div><div class="bar phase"><i style="width:${Math.min(100, r.week / r.weeks * 100)}%"></i></div>`;
   }
   function refreshStatus() {
     const s = g.s, p = s.project, el = $('#status');
     if (!p) {
       const active = s.products.filter(x => x.active);
       el.innerHTML = `<div><b class="accent">Idle.</b> <span class="muted">${active.length ? active.length + ' product(s) on the market. ' : ''}Start a new project or take a contract.</span></div>` +
-        (active.length ? `<div class="muted">Last week: ${active.map(x => `${esc(x.name)} ${fmtMoney(x.lastWeek || 0)}`).join(' · ')}</div>` : '');
+        (active.length ? `<div class="muted">Last week: ${active.map(x => `${esc(x.name)} ${fmtMoney(x.lastWeek || 0)}`).join(' · ')}</div>` : '') + researchLine();
       return;
     }
     if (p.kind === 'software') {
       const type = g.type(p.typeId); const phase = g.D.phases[Math.max(0, p.phase)];
       el.innerHTML = `<div><b class="accent">${esc(p.name)}</b> <span class="muted">${type.name} · ${g.D.sizes[p.sizeId].name} · ${g.platform(p.platformId).name}</span></div>
         <div class="muted">${p.status === 'fixing' ? 'Fixing bugs…' : 'Phase ' + (p.phase + 1) + '/3: ' + phase.name} · ⚙ ${Math.round(p.tech)} ✎ ${Math.round(p.design)} · 🐛 ${Math.round(p.bugs)}</div>
-        <div class="bar"><i style="width:${Math.min(100, p.week / p.weeks * 100)}%"></i></div>`;
+        <div class="bar"><i style="width:${Math.min(100, p.week / p.weeks * 100)}%"></i></div>` + researchLine();
     } else {
       el.innerHTML = `<div><b class="accent">Contract:</b> ${esc(p.name)}</div><div class="muted">Points ${Math.round(p.points)} / ${p.offer.need} needed · pays ${fmtMoney(p.offer.pay)}</div>
-        <div class="bar phase"><i style="width:${Math.min(100, p.week / p.weeks * 100)}%"></i></div>`;
+        <div class="bar phase"><i style="width:${Math.min(100, p.week / p.weeks * 100)}%"></i></div>` + researchLine();
     }
   }
   function appendLog(entry) {
@@ -103,7 +112,8 @@
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b)); renderTab(); }));
   function renderTab() {
     const body = $('#tab-body'); if (!g.s) return;
-    const fn = { dev: tabDev, contracts: tabContracts, post: tabPost, team: tabTeam, company: tabCompany, products: tabProducts }[tab];
+    const fn = { dev: tabDev, contracts: tabContracts, post: tabPost, research: tabResearch, team: tabTeam, company: tabCompany, products: tabProducts }[tab];
+    if (tab === 'dev') lastDevYear = g.year;
     body.innerHTML = fn();
     bindTab(body);
   }
@@ -112,6 +122,7 @@
       const a = el.dataset.act, id = +el.dataset.id; let err = null;
       if (a === 'accept') err = g.acceptContract(id);
       else if (a === 'post') err = g.post(el.dataset.kind);
+      else if (a === 'research') err = g.startResearch(el.dataset.id);
       else if (a === 'hire') err = g.hire(id);
       else if (a === 'fire') g.fire(id);
       else if (a === 'path') err = g.choosePath(el.dataset.path);
@@ -147,7 +158,8 @@
     const sizes = g.availableSizes(); if (!sizes.includes(devForm.sizeId)) devForm.sizeId = sizes[sizes.length - 1];
     const cost = devForm.platformId ? g.projectCost(devForm.sizeId, devForm.platformId) : 0;
     const size = g.D.sizes[devForm.sizeId];
-    return `<h3>New software</h3>
+    const tip = s.products.length === 0 ? `<div class="card tip"><div class="title">💡 Your first software</div><div class="meta">Keep it <b>Small</b> on the <b>Commodus 64</b> (you already own one, no license fee). Utilities like Performance and Reliability; Games want Features, Interface and Marketing. Finish, read the reviews, then Post on the BBS to pump sales. Press <b>?</b> up top for the full guide.</div></div>` : '';
+    return `<h3>New software</h3>${tip}
       <div class="field"><label>Name</label><input type="text" id="f-name" maxlength="28" value="${esc(devForm.name)}" placeholder="e.g. TurboDisk, Chirpr, DoorsCleaner"></div>
       <div class="field"><label>Type ${s.trend ? `<span class="pill hot">🔥 Trending: ${g.type(s.trend).name}</span>` : ''}</label>
         <select id="f-type">${types.map(t => `<option value="${t.id}" ${t.id === devForm.typeId ? 'selected' : ''}>${t.name}${t.id === s.trend ? ' 🔥' : ''}</option>`).join('')}</select>
@@ -173,6 +185,18 @@
       <div class="card"><div class="title">📣 Pump sales</div><div class="meta">Boost hype for products on the market (and the next launch). 12% chance to get ratioed.</div><div class="actions"><button data-act="post" data-kind="pump" ${dis}>${net.verb}</button></div></div>
       <div class="card"><div class="title">🤝 Ask for work</div><div class="meta">Brings in 2–3 contract offers.</div><div class="actions"><button data-act="post" data-kind="contracts" ${dis}>${net.verb}</button></div></div>
       <div class="card"><div class="title">📖 Share your journey</div><div class="meta">Build an audience. More fans = stronger launches.</div><div class="actions"><button data-act="post" data-kind="journey" ${dis}>${net.verb}</button></div></div>`;
+  }
+  function tabResearch() {
+    const s = g.s, list = g.researchables();
+    let html = `<h3>Research</h3><p class="muted">🔬 ${Math.floor(s.rp)} research points. You earn them by developing (12% of points) and by tinkering while idle. Unlock new software categories and team upgrades. One project at a time; research runs alongside development.</p>`;
+    if (s.research) html += `<div class="card"><div class="title">In progress: ${esc(s.research.name)}</div><div class="meta">Week ${s.research.week}/${s.research.weeks}</div></div>`;
+    const types = list.filter(x => x.kind === 'type'), boosts = list.filter(x => x.kind === 'boost');
+    const card = r => `<div class="card"><div class="title">${esc(r.name)} ${r.hot ? '<span class="pill hot">🔥 trending</span>' : ''}</div><div class="meta">${esc(r.desc)}</div><div class="meta">🔬 <b class="${s.rp >= r.rp ? 'good' : 'bad'}">${r.rp}</b> · ${fmtMoney(r.cost)} · ${r.weeks} weeks</div><div class="actions"><button data-act="research" data-id="${r.id}" ${s.research || s.rp < r.rp || s.money < r.cost ? 'disabled' : ''}>Research</button></div></div>`;
+    html += `<h4>New software categories (${types.length})</h4>` + (types.length ? types.map(card).join('') : '<p class="muted">Nothing new to discover this year. Time will tell.</p>');
+    html += `<h4>Team & business upgrades (${boosts.length})</h4>` + (boosts.length ? boosts.map(card).join('') : '<p class="muted">Nothing available yet.</p>');
+    const up = g.upcoming(); if (up.length) html += `<h4>On the horizon</h4><p class="muted">${up.map(u => `${esc(u.name)} <span class="pill">${u.year}</span>`).join(' ')}</p>`;
+    if (s.researched.length) html += `<h4>Done</h4><p class="muted">${s.researched.map(id => { const t = g.type(id); return esc(t ? t.name : (g.D.research.find(r => r.id === id) || {}).name || id); }).join(' · ')}</p>`;
+    return html;
   }
   function tabTeam() {
     const s = g.s, max = g.maxEmployees();
@@ -309,6 +333,30 @@
     $('#again').addEventListener('click', () => { localStorage.removeItem(SAVE_KEY); location.reload(); });
   }
 
+  function modalGuide(first) {
+    const m = openModal(`<h2>${first ? 'Welcome to the garage' : 'How to play'}</h2>
+      <div class="guide">
+      <p><b class="accent">Goal:</b> build a software company from 1984 until the AI apocalypse of 2026. Money, fans and reputation are your score. Weekly rent and salaries drain cash, so never sit idle for long.</p>
+      <h4>Your first software</h4>
+      <ol>
+        <li>Open <b>Develop</b>, give it a name, pick <b>Utility</b> or <b>Video Game</b>, platform <b>Commodus 64</b> (you own one, so no license), size <b>Small</b>.</li>
+        <li>Development has 3 phases with 3 sliders each. Each category has a secret ideal mix. Utilities: lean into Performance and Reliability. Games: Features, Interface and Marketing. Spreadsheets: Features, Reliability and Support.</li>
+        <li>When it is feature complete, <b>fix bugs</b> if there are many, then ship. Reviews show your <i>Slider fit</i> and <i>Effort</i> so you can learn the mix.</li>
+        <li>Sales trickle in weekly. Go to <b>Post</b> and pump sales on the BBS right after launch for a hype boost.</li>
+      </ol>
+      <h4>Then</h4>
+      <ol>
+        <li><b>Contracts</b> pay guaranteed cash while idle. Ask for work on the BBS when there are none.</li>
+        <li><b>Research</b> 🔬 unlocks new categories (Database, Finance, Website, SaaS, Apps...) and upgrades like Source Control. Points come from developing.</li>
+        <li>Around $25k you pick a path: Indie Hacker, Solopreneur or a Startup Office with employees. Bigger teams make bigger projects.</li>
+        <li>Watch the news ticker. Platforms die, trends shift, crashes happen. <kbd>Space</kbd> pauses. The game autosaves.</li>
+      </ol>
+      </div>
+      <div class="btns"><button class="primary" id="ok">${first ? 'Let\'s build something' : 'Got it'}</button></div>`);
+    m.querySelector('#ok').addEventListener('click', () => { closeModal(); if (g.pending) openPending(g.pending); else setSpeed(1); });
+  }
+  $('#btn-help').addEventListener('click', () => { if (!g.s) return; setSpeed(0); modalGuide(false); });
+
   function modalStart(hasSave) {
     const m = openModal(`<h2>TECH LIFE TYCOON</h2>
       <p>It's 1984. You have a second-hand computer, a garage, and 42 years before two AI companies make all software obsolete. Make the most of it.</p>
@@ -317,9 +365,9 @@
       <div class="btns">${hasSave ? '<button id="cont">Continue saved game</button>' : ''}<button class="primary" id="new">Start in the garage</button></div>`);
     m.querySelector('#new').addEventListener('click', () => {
       g.newGame(m.querySelector('#s-company').value.trim() || 'Garage Soft', m.querySelector('#s-founder').value.trim() || 'You');
-      closeModal(); rebuildLog(); refreshAll(); save(); setSpeed(1);
+      closeModal(); rebuildLog(); refreshAll(); save(); setSpeed(0); modalGuide(true);
     });
-    if (hasSave) m.querySelector('#cont').addEventListener('click', () => { load(); closeModal(); rebuildLog(); refreshAll(); if (g.pending) openPending(g.pending); setSpeed(1); });
+    if (hasSave) m.querySelector('#cont').addEventListener('click', () => { load(); g.migrate(); closeModal(); rebuildLog(); refreshAll(); if (g.pending) openPending(g.pending); setSpeed(1); });
   }
 
   // ---------- controls
